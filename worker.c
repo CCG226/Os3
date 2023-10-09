@@ -3,7 +3,10 @@
 #include <unistd.h>
 #include <sys/ipc.h>
 #include <sys/shm.h>
+#include <sys/msg.h>
 #include "worker.h"
+#include <errno.h>
+
 //Author: Connor Gilmore
 //Purpose: takes in a numeric argument
 //Program will take in two arguments that represent a random time in seconds and nanoseconds
@@ -38,12 +41,22 @@ void ArgumentParser(int argc, char** argv, int* seconds, int* nanoseconds)
 	return;
 
 }
+int AccessMsgQueue()
+{
+int msqid = -1;
+if((msqid = msgget(MSG_SYSTEM_KEY, 0777)) == -1)
+{
+perror("Failed To Join Os's Message Queue.\n");
+exit(1);
+}
+return msqid;
+}
 struct Sys_Time* AccessSystemTime()
 {//access system clock from shared memory (read-only(
 	int shm_id = shmget(SYS_TIME_SHARED_MEMORY_KEY, sizeof(struct Sys_Time), 0444);
 	if(shm_id == -1)
 	{
-		printf("Failed To Access System Clock");
+		perror("Failed To Access System Clock");
 
 		exit(1);	
 	}
@@ -54,7 +67,7 @@ void DisposeAccessToShm(struct Sys_Time* clock)
 {//detach system clock from shared memory
 	if(shmdt(clock) == -1)
 	{
-		printf("Failed To Release Shared Memory Resources.\n");
+		perror("Failed To Release Shared Memory Resources.\n");
 		exit(1);
 	}
 
@@ -78,6 +91,7 @@ void GenerateTerminationTime(int currentSecond, int currentNanosecond, int* term
 //workers console print task
 void Task(int workerSeconds, int workerNanoseconds)
 {
+	int msqid = AccessMsgQueue();
 	//get parent and worker ids to print
 	pid_t os_id = getppid();
 	pid_t worker_id = getpid();
@@ -94,12 +108,17 @@ void Task(int workerSeconds, int workerNanoseconds)
 	//stores current time at start, to determine if a second goes by
 	int initialNanoseconds = Clock->nanoseconds;
 	int prevSecond = Clock->seconds;
+	
+	int status = 1;
 
 	//tracks how many seconds to go by
 	int secondCounter = 0;
+
+	msgbuffer msg;
+
 	//keep checking system clock and keep looping while termination time hasnt been reached
-	while(Clock->seconds < termSecond || Clock->nanoseconds < termNanosecond)
-	{
+	while(status != 0)
+	{ 
 
 		//a second has gone by on the system clock	
 		if(Clock->seconds == prevSecond + 1 && Clock->nanoseconds >= initialNanoseconds)	
@@ -108,11 +127,44 @@ void Task(int workerSeconds, int workerNanoseconds)
 			secondCounter++;
 			printf("WORKER PID: %d PPID: %d SysClockS: %d SysClockNano: %d TermTimeS: %d TermTimeNano: %d \n--%d seconds have passsed since starting  \n",worker_id,os_id,Clock->seconds,Clock->nanoseconds, termSecond, termNanosecond, secondCounter);
 		}
-
+		
+		AwaitOsRequestForStatusMsg(msqid, &msg);
+		
+		if(Clock->seconds >= termSecond && Clock->nanoseconds >= termNanosecond)
+		{
+		status = 0;
+	
+		}
+		else
+		{
+		 status = 1;	
+		}
+		SendStatusResponseMsg(msqid, &msg, status);
+	
 	}
 	//worker saying its done
 	printf("WORKER PID: %d PPID: %d SysClockS: %d SysClockNano: %d TermTimeS: %d TermTimeNano: %d \n--Terminating  \n",worker_id,os_id,Clock->seconds,Clock->nanoseconds, termSecond, termNanosecond);
 	//detach workers read only system clock from shared memory
 	DisposeAccessToShm(Clock);
 
+}
+void AwaitOsRequestForStatusMsg(int msqid, msgbuffer *msg)
+{
+if(msgrcv(msqid, msg, sizeof(msgbuffer), getpid(), 0) == -1)
+{
+printf("Failed To Get Message Request From Os. Worker: %d\n", getpid());
+fprintf(stderr, "errno: %d\n", errno);
+exit(1);
+}
+printf("%d %d Os Request Gotten From Worker type data\n", msg->mtype, msg->Data);
+}
+void SendStatusResponseMsg(int msqid, msgbuffer *msg, int status)
+{
+msg->Data = status;
+msg->mtype = 1;
+if(msgsnd(msqid, msg, sizeof(msgbuffer), 0) == -1) {
+perror("Failed To Generate Response Message Back To Os.\n");
+exit(1);
+}
+printf("Sent msqid:  %d Data: %d mtype: %d\n", msqid, msg->Data, msg->mtype);
 }

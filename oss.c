@@ -8,7 +8,10 @@
 #include <time.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <sys/msg.h>
+#include <errno.h>
 #include "oss.h"
+
 //Author: Connor Gilmore
 //Purpose: Program task is to handle and launch x amount of worker processes 
 //The Os will terminate no matter what after 60 seconds
@@ -25,12 +28,17 @@ void Begin_OS_LifeCycle()
 
 	signal(SIGALRM, End_OS_LifeCycle);
 
-	alarm(60);
+	alarm(10);
 
 }
 
 void End_OS_LifeCycle()
 {
+
+	int shm_id = shmget(SYS_TIME_SHARED_MEMORY_KEY, sizeof(struct Sys_Time), 0777);
+	shmctl(shm_id, IPC_RMID, NULL);
+	int msqid = msgget(MSG_SYSTEM_KEY, 0777);
+	msgctl(msqid, IPC_RMID, NULL);
 	printf("\n\nOS Has Reached The End Of Its Life Cycle And Has Terminated.\n\n");	
 	exit(1);
 
@@ -73,6 +81,53 @@ int main(int argc, char** argv)
 	StopSystemClock(OS_Clock ,shm_ClockId);
 	printf("\n\n\n");
 	return EXIT_SUCCESS;
+
+}
+int ConstructMsgQueue()
+{
+int id = -1;
+
+if((id = msgget(MSG_SYSTEM_KEY, 0777 | IPC_CREAT)) == -1)
+{
+printf("Failed To Construct OS's Msg Queue\n");
+exit(1);
+
+}
+return id;
+}
+void DestructMsgQueue(int msqid)
+{
+
+if(msgctl(msqid, IPC_RMID, NULL) == -1)
+{
+printf("Failed To Destroy Message Queue\n");
+exit(1);
+}
+}
+int SendAndRecieveStatusMsg(int msqid, pid_t workerId) 
+{
+msgbuffer msg;
+
+msg.mtype = (int) workerId;
+msg.Data = -1;
+
+if(msgsnd(msqid, &msg, sizeof(msgbuffer),0) == -1)
+	{
+	printf("Failed To Send Message To Worker %d. \n", workerId);
+	exit(1);
+	}
+
+printf("Help %d %d %d\n", msqid, msg.mtype, msg.Data);
+if(msgrcv(msqid, &msg, sizeof(msgbuffer), getpid(), 0) == -1)
+{
+printf("Failed To Receive Message From Worker In Oss.\n");
+fprintf(stderr, "errno: %d\n", errno);
+
+exit(1);
+
+}
+printf("Test\n");
+return msg.Data;
 
 }
 int StartSystemClock(struct Sys_Time **Clock)
@@ -199,8 +254,38 @@ int ValidateInput(int workerAmount, int workerSimLimit, int workerTimeLimit)
 	return isValid;
 
 }
+pid_t GetNxtWorkerToMsg(struct PCB table[], int* curIndex)
+{
+pid_t nxtWorker = 0;	
+if(*(curIndex) == TABLE_SIZE)
+{
+*(curIndex) = 0;
+
+}
+while(*(curIndex) < TABLE_SIZE)
+{
+
+if(table[*(curIndex)].occupied == 1)
+{
+nxtWorker = table[*(curIndex)].pid;
+break;
+}
+
+
+*(curIndex) = *(curIndex) + 1;	
+
+}
+
+return nxtWorker;
+
+}
 void WorkerHandler(int workerAmount, int workerSimLimit,int workerTimeLimit, struct Sys_Time* OsClock, struct PCB processTable[])
 {
+	int msqid = ConstructMsgQueue();
+
+	int nxtWorkerIndex = 0;
+
+	pid_t nxtWorkerToMsg = 0;
 
 	//tracks amount of workers finished with task
 	int workersComplete = 0;
@@ -218,7 +303,6 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int workerTimeLimit, str
 	}
 	else
 	{
-
 		//workerAmount (-n) is greater than or equal to  WorkerSimLimit (-s), so launch (-s)  amount of workers	
 		WorkerLauncher(workerSimLimit, workerTimeLimit, processTable, OsClock);	
 
@@ -249,10 +333,25 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int workerTimeLimit, str
 		if(HasHalfSecPassed(OsClock->nanoseconds) == 0)
 		{
 			PrintProcessTable(processTable, OsClock->seconds, OsClock->nanoseconds);
+		}
+		 
+	        nxtWorkerToMsg = GetNxtWorkerToMsg(processTable, &nxtWorkerIndex);
+		if(nxtWorkerToMsg != 0)
+		{
+			nxtWorkerIndex++;
+		
+	
+		       	int statusState = SendAndRecieveStatusMsg(msqid, nxtWorkerToMsg);
+			printf("Recieved Msg From %d. Status %d.\n",nxtWorkerToMsg ,statusState);
+		 	 if(statusState == 0)
+			{
+			printf("Worker %d gonna terminate soon", nxtWorkerToMsg);
+			}
 		}	
-
+                
 	}
 
+	DestructMsgQueue(msqid);
 
 }
 void GenerateWorkTime(int timeLimit, int* sec, int* nanosec)

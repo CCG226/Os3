@@ -12,7 +12,10 @@ struct PCB {
 	int startSeconds;//second launched
 	int startNano; //nanosecond launched
 };
-
+typedef struct msgbuffer {
+long mtype;
+int Data;
+} msgbuffer;
 //help information
 void Help();
 
@@ -62,6 +65,16 @@ void BuildProcessTable(struct PCB table[]);
 //returns 0 if 1/2 second has passed, else it return 1
 int HasHalfSecPassed(int nanoseconds);
 
+int ConstructMsgQueue();
+
+void DestructMsgQueue(int msqid);
+
+int SendAndRecieveStatusMsg(int msqid, pid_t worker_id);
+
+pid_t GetNxtWorkerToMsg(struct PCB processTable[], int* curIndex);
+
 const int TABLE_SIZE = 20;
+
+const int MSG_SYSTEM_KEY = 5303;
 
 const int SYS_TIME_SHARED_MEMORY_KEY = 63131;
