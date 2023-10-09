@@ -28,7 +28,7 @@ void Begin_OS_LifeCycle()
 
 	signal(SIGALRM, End_OS_LifeCycle);
 
-	alarm(10);
+	alarm(60);
 
 }
 
@@ -117,8 +117,8 @@ if(msgsnd(msqid, &msg, sizeof(msgbuffer),0) == -1)
 	exit(1);
 	}
 
-printf("Help %d %d %d\n", msqid, msg.mtype, msg.Data);
-if(msgrcv(msqid, &msg, sizeof(msgbuffer), getpid(), 0) == -1)
+
+if(msgrcv(msqid, &msg, sizeof(msgbuffer), 1, 0) == -1)
 {
 printf("Failed To Receive Message From Worker In Oss.\n");
 fprintf(stderr, "errno: %d\n", errno);
@@ -126,7 +126,6 @@ fprintf(stderr, "errno: %d\n", errno);
 exit(1);
 
 }
-printf("Test\n");
 return msg.Data;
 
 }
@@ -147,8 +146,8 @@ int StartSystemClock(struct Sys_Time **Clock)
 		exit(1);
 	}
 	//set default clock values
-	//clock speed is 5000 nanoseconds per 'tick'
-	(*Clock)->rate = 5000;
+	//clock speed is 50000 nanoseconds per 'tick'
+	(*Clock)->rate = 50000;
 	(*Clock)->seconds = 0;
 	(*Clock)->nanoseconds = 0;
 
@@ -268,6 +267,8 @@ while(*(curIndex) < TABLE_SIZE)
 if(table[*(curIndex)].occupied == 1)
 {
 nxtWorker = table[*(curIndex)].pid;
+
+*(curIndex) = *(curIndex) + 1;
 break;
 }
 
@@ -292,6 +293,8 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int workerTimeLimit, str
 
 	//tracks amount of workers left to be launched
 	int workersLeft = 0;
+	
+	int workersToMessage = workerAmount;
 
 	if(workerSimLimit > workerAmount)
 	{
@@ -310,10 +313,37 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int workerTimeLimit, str
 		workersLeft = workerAmount - workerSimLimit;
 
 	}
+
 	//keep looping until all workers (-n) have finished working
 	while(workersComplete !=  workerAmount)
-	{
-		int WorkerFinishedId = AwaitWorker();//check to see if a worker is done, returns 0 if none are done, returns id of worker done if a worker is done
+	{	
+		//increment clock
+		RunSystemClock(OsClock);
+		//if 1/2 second passed, print process table
+		if(HasHalfSecPassed(OsClock->nanoseconds) == 0)
+		{
+			PrintProcessTable(processTable, OsClock->seconds, OsClock->nanoseconds);
+		}
+		 
+	        nxtWorkerToMsg = GetNxtWorkerToMsg(processTable, &nxtWorkerIndex);
+		printf("%d\n", nxtWorkerToMsg);
+		if(nxtWorkerToMsg != 0 && workersToMessage != 0)
+		{
+			
+			
+//	printf("\nSTATE: nxtWorkerIndex: %d, seconds: %d nanoseconds: %d workersComplete: %d workersLeft: %d \n",nxtWorkerToMsg, OsClock->seconds, OsClock->nanoseconds, workersComplete,workersLeft); 	
+		       	int statusState = SendAndRecieveStatusMsg(msqid, nxtWorkerToMsg);
+			
+		 	 if(statusState == 0)
+			{
+				workersToMessage--;
+				printf("Recieved Msg From %d. Status %d. WorkersToMesg %d\n",nxtWorkerToMsg ,statusState, workersToMessage);
+	
+			printf("Worker %d gonna terminate soon %d", nxtWorkerToMsg, msqid);
+		
+			}
+		}	
+               	int WorkerFinishedId = AwaitWorker();//check to see if a worker is done, returns 0 if none are done, returns id of worker done if a worker is done
 
 		if(WorkerFinishedId != 0)//if a 0 is returned, then no workers are currently done at them moement
 		{//if a worker is finished
@@ -326,29 +356,7 @@ void WorkerHandler(int workerAmount, int workerSimLimit,int workerTimeLimit, str
 				WorkerLauncher(1,workerTimeLimit,processTable,OsClock);
 				workersLeft--;
 			}
-		}	
-		//increment clock
-		RunSystemClock(OsClock);
-		//if 1/2 second passed, print process table
-		if(HasHalfSecPassed(OsClock->nanoseconds) == 0)
-		{
-			PrintProcessTable(processTable, OsClock->seconds, OsClock->nanoseconds);
-		}
-		 
-	        nxtWorkerToMsg = GetNxtWorkerToMsg(processTable, &nxtWorkerIndex);
-		if(nxtWorkerToMsg != 0)
-		{
-			nxtWorkerIndex++;
-		
-	
-		       	int statusState = SendAndRecieveStatusMsg(msqid, nxtWorkerToMsg);
-			printf("Recieved Msg From %d. Status %d.\n",nxtWorkerToMsg ,statusState);
-		 	 if(statusState == 0)
-			{
-			printf("Worker %d gonna terminate soon", nxtWorkerToMsg);
-			}
-		}	
-                
+		}	 
 	}
 
 	DestructMsgQueue(msqid);
