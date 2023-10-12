@@ -23,10 +23,13 @@ void ArgumentParser(int argc, char** argv, int* seconds, int* nanoseconds);
 //results stored in termSecond and termNanosecond which are passed by ref
 void GenerateTerminationTime(int currentSecond, int currentNanosecond, int* termSecond, int* termNanosecond, int secondsToRun, int nanosecondsToRun);
 
+//accesses message queue create by os to communicate to os
 int AccessMsgQueue();
 
+//worker waits for os to send request message via msgrcv so that worker can check to if termination time has passed and thus can terminate 
 void AwaitOsRequestForStatusMsg(int msqid, msgbuffer *msg);
 
+//if worker must terminate it sends a 0 back to os, else its still working and sends a 1 back to os
 void SendStatusResponseMsg(int msqid, msgbuffer *msg, int status);
 
 const int MSG_SYSTEM_KEY = 5303;

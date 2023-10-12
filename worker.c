@@ -43,13 +43,14 @@ void ArgumentParser(int argc, char** argv, int* seconds, int* nanoseconds)
 }
 int AccessMsgQueue()
 {
-int msqid = -1;
-if((msqid = msgget(MSG_SYSTEM_KEY, 0777)) == -1)
-{
-perror("Failed To Join Os's Message Queue.\n");
-exit(1);
-}
-return msqid;
+	//access message queue create by workinh using key constant
+	int msqid = -1;
+	if((msqid = msgget(MSG_SYSTEM_KEY, 0777)) == -1)
+	{
+		perror("Failed To Join Os's Message Queue.\n");
+		exit(1);
+	}
+	return msqid;
 }
 struct Sys_Time* AccessSystemTime()
 {//access system clock from shared memory (read-only(
@@ -108,7 +109,8 @@ void Task(int workerSeconds, int workerNanoseconds)
 	//stores current time at start, to determine if a second goes by
 	int initialNanoseconds = Clock->nanoseconds;
 	int prevSecond = Clock->seconds;
-	
+
+	//determines of worker can keep working, if 0 worker must terminate
 	int status = 1;
 
 	//tracks how many seconds to go by
@@ -116,7 +118,7 @@ void Task(int workerSeconds, int workerNanoseconds)
 
 	msgbuffer msg;
 
-	//keep checking system clock and keep looping while termination time hasnt been reached
+	//while status is NOT 0, keep working
 	while(status != 0)
 	{ 
 
@@ -127,20 +129,21 @@ void Task(int workerSeconds, int workerNanoseconds)
 			secondCounter++;
 			printf("WORKER PID: %d PPID: %d SysClockS: %d SysClockNano: %d TermTimeS: %d TermTimeNano: %d \n--%d seconds have passsed since starting  \n",worker_id,os_id,Clock->seconds,Clock->nanoseconds, termSecond, termNanosecond, secondCounter);
 		}
-		
+		//wait for os to send a request for status information on wheather or not this worker is done working
 		AwaitOsRequestForStatusMsg(msqid, &msg);
-		
+		//if system clock surpasses termination time
 		if(Clock->seconds >= termSecond && Clock->nanoseconds >= termNanosecond)
-		{
-		status = 0;
-	
+		{//set status to 0 meaning work is done and needs to terminate
+			status = 0;
+
 		}
 		else
-		{
-		 status = 1;	
+		{//else worker still has time to worker
+			status = 1;	
 		}
+		//send status varable indicating status of worker back to os
 		SendStatusResponseMsg(msqid, &msg, status);
-	
+
 	}
 	//worker saying its done
 	printf("WORKER PID: %d PPID: %d SysClockS: %d SysClockNano: %d TermTimeS: %d TermTimeNano: %d \n--Terminating  \n",worker_id,os_id,Clock->seconds,Clock->nanoseconds, termSecond, termNanosecond);
@@ -150,21 +153,25 @@ void Task(int workerSeconds, int workerNanoseconds)
 }
 void AwaitOsRequestForStatusMsg(int msqid, msgbuffer *msg)
 {
-if(msgrcv(msqid, msg, sizeof(msgbuffer), getpid(), 0) == -1)
-{
-printf("Failed To Get Message Request From Os. Worker: %d\n", getpid());
-fprintf(stderr, "errno: %d\n", errno);
-exit(1);
-}
-printf("%d %d Os Request Gotten From Worker type data\n", msg->mtype, msg->Data);
+	//blocking wait for message from os requesting status info
+	//os communicates to this worker via its pid (4th param)	
+	if(msgrcv(msqid, msg, sizeof(msgbuffer), getpid(), 0) == -1)
+	{
+		printf("Failed To Get Message Request From Os. Worker: %d\n", getpid());
+		fprintf(stderr, "errno: %d\n", errno);
+		exit(1);
+	}
+
 }
 void SendStatusResponseMsg(int msqid, msgbuffer *msg, int status)
-{
-msg->Data = status;
-msg->mtype = 1;
-if(msgsnd(msqid, msg, sizeof(msgbuffer), 0) == -1) {
-perror("Failed To Generate Response Message Back To Os.\n");
-exit(1);
-}
-printf("Sent msqid:  %d Data: %d mtype: %d\n", msqid, msg->Data, msg->mtype);
+{//send status update via integer value Data about if this worker is gonna terminate
+	//status == 0 if worker is gonna terminate
+	msg->Data = status;
+	msg->mtype = 1;
+	//send message back to os
+	if(msgsnd(msqid, msg, sizeof(msgbuffer), 0) == -1) {
+		perror("Failed To Generate Response Message Back To Os.\n");
+		exit(1);
+	}
+
 }
